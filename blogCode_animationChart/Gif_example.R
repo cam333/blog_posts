@@ -1,11 +1,9 @@
 library(dplyr)
-#library(magrittr)
 library(lubridate)
 library(ggplot2)
-#library(gridExtra)
 library(animation)
-# library(reshape2)
 library(tidyr)
+library(RCurl)
 
 buys<-c('7/13/2012','8/15/2012','9/14/2012',
         '10/15/2012','11/15/2012','12/14/2012',
@@ -18,8 +16,10 @@ buys<-c('7/13/2012','8/15/2012','9/14/2012',
 )
 
 
+url <- "https://raw.githubusercontent.com/cam333/blog_posts/master/blogCode_animationChart/13_14.csv"
+x <- getURL(url)
 
-rawdata <- read.csv("C:\\Users\\cmohan\\Desktop\\Junk Drawer\\13_14.csv") %>%
+rawdata <- read.csv(text = x) %>%
   select(Date,July_13_June_14_fw,July_14_June_15_fw) %>%
   mutate(Date = mdy(Date)) %>%
   filter(Date > ymd('2012-06-29')) %>%
@@ -29,11 +29,9 @@ rawdata <- read.csv("C:\\Users\\cmohan\\Desktop\\Junk Drawer\\13_14.csv") %>%
   gather(variable,value,-Date,-buy) %>%
   na.omit()
 
-draw.chart<-function(cutoff){
+chart<-function(cutoff){
 
-  cutoff <- ymd('2014-06-30')
-
-  a<-ggplot(filter(rawdata,Date <= cutoff),aes(x=Date, y=value, group = variable)) +
+a <-ggplot(filter(rawdata,Date <= cutoff),aes(x=Date, y=value, group = variable)) +
     geom_line() +
     geom_hline(yintercept  = filter(rawdata,Date <= cutoff &
                                       buy == 1 &
@@ -82,16 +80,15 @@ draw.chart<-function(cutoff){
 
 }
 
-draw.chart(ymd('2014-06-30'))
 
-trace.animate <- function() {
+animate <- function() {
   lapply(seq(ymd('2012-06-29 UTC'),ymd('2014-06-30'),by = '2 day'), function(i) {
-    draw.chart(ymd(i))
+    chart(ymd(i))
   })
 }
 
 
-saveVideo(trace.animate(),interval=.05, video.name="C:\\Users\\cmohan\\Desktop\\buypoint2.mp4",
+saveVideo(animate(),interval=.05, video.name="C:\\Users\\cmohan\\Desktop\\buypoint2.mp4",
           ani.width = 800,
           ani.height = 372)
 #saveHTML(trace.animate(),interval=.05)
