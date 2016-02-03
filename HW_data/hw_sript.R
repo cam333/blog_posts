@@ -1,6 +1,7 @@
 library(dplyr)
 library(ggplot2)
 # Data Pull
+#this is a git test!
 product_raw <- read.csv("https://raw.githubusercontent.com/cam333/blog_posts/master/HW_data/product.csv")
 
 product_class_raw <- read.csv("https://raw.githubusercontent.com/cam333/blog_posts/master/HW_data/product_class.csv")
