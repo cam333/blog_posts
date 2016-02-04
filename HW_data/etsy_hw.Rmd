@@ -1,0 +1,163 @@
+---
+title: "Etsy Homework"
+author: "Chuck"
+date: "February 4, 2016"
+output: html_document
+---
+
+First lets load some libraries and data. I saved the data to my GitHub account so I can call it from anywhere. 
+
+```{r,echo=FALSE,message=FALSE}
+# Libraries 
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(tidyr)
+library(scales)
+
+# Data load
+product_raw <- read.csv("https://raw.githubusercontent.com/cam333/blog_posts/master/HW_data/product.csv")
+
+product_class_raw <- read.csv("https://raw.githubusercontent.com/cam333/blog_posts/master/HW_data/product_class.csv")
+
+promotion_raw <- read.csv("https://raw.githubusercontent.com/cam333/blog_posts/master/HW_data/promotion.csv")
+
+transactions_raw <- read.csv("https://raw.githubusercontent.com/cam333/blog_posts/master/HW_data/transactions.csv")
+
+```
+
+Next, it seems helpful to pull all the data into one data frame. With two simple left joins and a little text cleaning is all it takes. (the promotion data will be delt with later) 
+
+```{r, echo=FALSE}
+all_data <- left_join(product_class_raw,product_raw, by = "product_class_id") %>%
+            left_join(transactions_raw,data1, by = "product_id")%>%
+            mutate(product_department = gsub("'","",product_department),
+                   product_category = gsub("'","",product_category),
+                   product_subcategory = gsub("'","",product_subcategory),
+                   product_family = gsub("'","",product_family),
+                   quarter = gsub("'","",quarter),
+                   year = gsub("'","",the_year),
+                   month = gsub("'","",month_of_year),
+                   brand_name = gsub("'","",brand_name),
+                   month_of_year = gsub("'","",month_of_year),
+                   date = ymd(paste(year,month,"15",sep ="-")),
+                   promotion_id = as.factor(promotion_id)
+                   )
+
+all_letters <- paste(paste(letters,collapse="|"),paste(LETTERS,collapse="|"),sep="|")
+
+promotion_data <- data.frame(promotion_raw,stringsAsFactors = FALSE) %>%
+  mutate(media_type = gsub("'","",media_type),
+         promotion_id = gsub("'","",promotion_id),
+         start_date = gsub("'","",start_date),
+         end_date = gsub("'","",end_date),
+         cost = gsub("'","",cost),
+         promotion_name = gsub("'","",promotion_name),
+         promotion_district_id = gsub("'","",promotion_district_id),
+         all_types = ifelse(grepl(all_letters,as.character(cost)) == FALSE, media_type,paste(media_type,cost,sep=",")),
+         new_date_1 = ifelse(lead(all_types) == "",lead(promotion_id),"false"),
+         new_date_2 = ifelse(lead(promotion_district_id) != "" & lead(all_types) == "", lead(promotion_district_id), "false"),
+         real_start_date = ifelse(new_date_1 == "false" & new_date_2 == 'false',start_date,new_date_1),
+         real_end_date =   ifelse(new_date_1 != "false" & new_date_2 != 'false',new_date_2,end_date),
+         real_cost =  ifelse(lead(promotion_id)!= "" & lead(promotion_district_id) != "" & lead(all_types) == "", end_date,
+                      ifelse(lead(promotion_id)!= "" & lead(promotion_district_id) == "", start_date, cost))) %>%
+  filter(real_start_date != "" & real_start_date != "NULL" ) %>%
+  mutate(all_types = gsub("'","",all_types)) %>%
+  select(-new_date_1,-new_date_2,-start_date,-end_date,-cost) %>%
+  mutate(real_date1 = ymd_hms(real_start_date),
+         real_date2 = ymd_hms(real_end_date),
+         real_cost = as.numeric(real_cost)) %>%
+  rowwise()%>%
+  mutate(real_start_date = min(real_date1,real_date2),
+         real_end_date = max(real_date1,real_date2)) %>%
+  mutate(promotion_interval = interval(real_start_date,real_end_date),
+         check = real_start_date - real_end_date)
+
+
+complete_data <-left_join(all_data,promotion_data, by = "promotion_id")
+
+```
+
+Some simple stats:
+
+* Number of stores: `r length(unique(all_data$store_id))`
+* Total sales: `r all_data %>% select(store_id, store_sales) %>% summarize(Total_sales = sum(as.numeric(store_sales), na.rm = TRUE)) %>% prettyNum(.,big.mark = ",")`
+* Products: 
+    + Number of departments: `r length(unique(all_data$product_department))`
+    + Number of categories: `r length(unique(all_data$product_category))`
+    + Number of subcategories: `r length(unique(all_data$product_subcategory))`
+* Number of brands: `r length(unique(all_data$brand_name))`
+
+Lets take a look at the data by product department.
+
+```{r,fig.width=10}
+department_data <- all_data  %>%
+  group_by(product_department) %>%
+  summarize(total_sales = sum(as.numeric(unit_sales), na.rm = TRUE)) %>%
+  na.omit()
+
+ggplot(department_data, aes(x = reorder(product_department,total_sales), y = total_sales)) +
+  geom_bar(stat = 'identity',aes(fill = product_department)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+  coord_flip()+
+  xlab("Product Department") +
+  ylab("Unit Sales") +
+  ggtitle("Sum of Unit Sales by Product Department")
+
+```
+
+Now lets take a look by product category 
+
+```{r,fig.width=10}
+category_data <- all_data  %>%
+  group_by(product_category) %>%
+  summarize(total_sales = sum(as.numeric(unit_sales), na.rm = TRUE)) %>%
+  na.omit()
+
+ggplot(category_data, aes(x = reorder(product_category,total_sales), y = total_sales)) +
+  geom_bar(stat = 'identity',aes(fill = product_category)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+  coord_flip()+
+  xlab("Product Department") +
+  ylab("Unit Sales") +
+  ggtitle("Sum of Unit Sales by product_category")
+```
+
+Now lets take a look by product brand 
+
+```{r,fig.width=8,fig.height=15}
+brand_data <- all_data  %>%
+  group_by(brand_name) %>%
+  summarize(total_sales = sum(as.numeric(unit_sales), na.rm = TRUE)) %>%
+  na.omit()
+
+ggplot(brand_data, aes(x = reorder(brand_name,total_sales), y = total_sales)) +
+  geom_bar(stat = 'identity',aes(fill = brand_name)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5),legend.position = "none") +
+  coord_flip()+
+  xlab("Product Department") +
+  ylab("Unit Sales") +
+  ggtitle("Sum of Unit Sales by brand name")
+```
+
+
+
+## promotions
+
+```{r,fig.width=10}
+options(scipen=999)
+promotion_spending <- complete_data %>%
+  group_by(date) %>%
+  summarize(spending = sum(real_cost, na.rm = TRUE), sales = sum(as.numeric(unit_sales), na.rm = TRUE)) %>%
+  na.omit() %>%
+  gather(variable, value,-date)
+
+ggplot(promotion_spending, aes(x=date, y=value)) +
+  geom_line() +
+  scale_y_continuous( labels = comma)+
+  ggtitle("Promotion Spending vs. Unit Sales") +
+  facet_grid(variable~., scales = "free_y") +
+  theme_bw(base_size = 20)
+
+```
+
