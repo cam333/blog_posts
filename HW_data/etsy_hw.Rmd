@@ -1,19 +1,23 @@
 ---
 title: "Etsy Homework"
-author: "Chuck"
+author: "Charles Mohan"
 date: "February 4, 2016"
 output: html_document
 ---
+# Data Munging
 
-First lets load some libraries and data. I saved the data to my GitHub account so I can call it from anywhere. 
+First lets load some libraries and data. I saved the data to my GitHub account so it can be called it from anywhere. 
 
-```{r,echo=FALSE,message=FALSE}
+
+```{r,echo=TRUE,message=FALSE}
 # Libraries 
 library(dplyr)
 library(ggplot2)
 library(lubridate)
 library(tidyr)
 library(scales)
+library(broom)
+library(pander)
 
 # Data load
 product_raw <- read.csv("https://raw.githubusercontent.com/cam333/blog_posts/master/HW_data/product.csv")
@@ -26,11 +30,12 @@ transactions_raw <- read.csv("https://raw.githubusercontent.com/cam333/blog_post
 
 ```
 
-Next, it seems helpful to pull all the data into one data frame. With two simple left joins and a little text cleaning is all it takes. (the promotion data will be delt with later) 
+Next, lets put all the data into one data frame. The `product_class`, `product_raw`, and `transactions_raw` were joined using the `product_class_id` and the `product_id`. The promotion data needed more work to process. The main problem was that `media_type` could be more than one. There is no problem when the promotion had only one media type, but if the promotion used say *radio* and *TV*, the data spilled over on to the next line. This needed to be cleaned up before it could be merged.    
 
-```{r, echo=FALSE}
-all_data <- left_join(product_class_raw,product_raw, by = "product_class_id") %>%
-            left_join(transactions_raw,data1, by = "product_id")%>%
+```{r, echo=TRUE,warning=FALSE,message=FALSE}
+
+class_prod_transactions <- left_join(product_class_raw,product_raw, by = "product_class_id") %>%
+            left_join(transactions_raw,., by = "product_id")%>%
             mutate(product_department = gsub("'","",product_department),
                    product_category = gsub("'","",product_category),
                    product_subcategory = gsub("'","",product_subcategory),
@@ -54,11 +59,16 @@ promotion_data <- data.frame(promotion_raw,stringsAsFactors = FALSE) %>%
          cost = gsub("'","",cost),
          promotion_name = gsub("'","",promotion_name),
          promotion_district_id = gsub("'","",promotion_district_id),
+         # I looked inside the cost variable to see if there were any letters, if so I knew it was actually a media type
          all_types = ifelse(grepl(all_letters,as.character(cost)) == FALSE, media_type,paste(media_type,cost,sep=",")),
+         # Then I looked to see where the lead of all_types was empty which told me to look at the promotion_id as the first new date var
          new_date_1 = ifelse(lead(all_types) == "",lead(promotion_id),"false"),
+         # Then I needed to know if the data was shifted by more than one, checking the promotion_district_id did this. 
          new_date_2 = ifelse(lead(promotion_district_id) != "" & lead(all_types) == "", lead(promotion_district_id), "false"),
+         # next step was to create a complete data field (at the end I'll fix a few errors here)
          real_start_date = ifelse(new_date_1 == "false" & new_date_2 == 'false',start_date,new_date_1),
          real_end_date =   ifelse(new_date_1 != "false" & new_date_2 != 'false',new_date_2,end_date),
+         # then I had to clean up the cost data.
          real_cost =  ifelse(lead(promotion_id)!= "" & lead(promotion_district_id) != "" & lead(all_types) == "", end_date,
                       ifelse(lead(promotion_id)!= "" & lead(promotion_district_id) == "", start_date, cost))) %>%
   filter(real_start_date != "" & real_start_date != "NULL" ) %>%
@@ -68,18 +78,25 @@ promotion_data <- data.frame(promotion_raw,stringsAsFactors = FALSE) %>%
          real_date2 = ymd_hms(real_end_date),
          real_cost = as.numeric(real_cost)) %>%
   rowwise()%>%
+  #this is a final check that the start and end dates are in the correct order.
   mutate(real_start_date = min(real_date1,real_date2),
          real_end_date = max(real_date1,real_date2)) %>%
+  #this might be useful at some point. 
   mutate(promotion_interval = interval(real_start_date,real_end_date),
-         check = real_start_date - real_end_date)
+         check = real_start_date - real_end_date) %>%
+  select(-real_date1,-real_date2)
 
-
-complete_data <-left_join(all_data,promotion_data, by = "promotion_id")
+# final join
+all_data <-left_join(class_prod_transactions,promotion_data, by = "promotion_id")
 
 ```
 
-Some simple stats:
 
+# Summary Analysis
+
+## Some simple stats:
+
+* Range of data-set: `r min(all_data$date,na.rm = TRUE)` to `r max(all_data$date,na.rm = TRUE)`
 * Number of stores: `r length(unique(all_data$store_id))`
 * Total sales: `r all_data %>% select(store_id, store_sales) %>% summarize(Total_sales = sum(as.numeric(store_sales), na.rm = TRUE)) %>% prettyNum(.,big.mark = ",")`
 * Products: 
@@ -88,7 +105,7 @@ Some simple stats:
     + Number of subcategories: `r length(unique(all_data$product_subcategory))`
 * Number of brands: `r length(unique(all_data$brand_name))`
 
-Lets take a look at the data by product department.
+## Unit Sales by Product Department
 
 ```{r,fig.width=10}
 department_data <- all_data  %>%
@@ -97,16 +114,17 @@ department_data <- all_data  %>%
   na.omit()
 
 ggplot(department_data, aes(x = reorder(product_department,total_sales), y = total_sales)) +
-  geom_bar(stat = 'identity',aes(fill = product_department)) +
+  geom_bar(stat = 'identity',aes(fill = reorder(product_department,total_sales))) +
   theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
   coord_flip()+
+  guides(fill = guide_legend(reverse = TRUE)) +
   xlab("Product Department") +
   ylab("Unit Sales") +
   ggtitle("Sum of Unit Sales by Product Department")
 
 ```
 
-Now lets take a look by product category 
+## Unit Sales by Product Category 
 
 ```{r,fig.width=10}
 category_data <- all_data  %>%
@@ -115,15 +133,16 @@ category_data <- all_data  %>%
   na.omit()
 
 ggplot(category_data, aes(x = reorder(product_category,total_sales), y = total_sales)) +
-  geom_bar(stat = 'identity',aes(fill = product_category)) +
+  geom_bar(stat = 'identity',aes(fill = reorder(product_category,total_sales))) +
   theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
   coord_flip()+
-  xlab("Product Department") +
+  guides(fill = guide_legend(reverse = TRUE)) +
+  xlab("Product Category") +
   ylab("Unit Sales") +
-  ggtitle("Sum of Unit Sales by product_category")
+  ggtitle("Sum of Unit Sales by Product Category")
 ```
 
-Now lets take a look by product brand 
+## Unit Sales by Product Brand 
 
 ```{r,fig.width=8,fig.height=15}
 brand_data <- all_data  %>%
@@ -135,20 +154,22 @@ ggplot(brand_data, aes(x = reorder(brand_name,total_sales), y = total_sales)) +
   geom_bar(stat = 'identity',aes(fill = brand_name)) +
   theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5),legend.position = "none") +
   coord_flip()+
-  xlab("Product Department") +
+  xlab("Brand Name") +
   ylab("Unit Sales") +
-  ggtitle("Sum of Unit Sales by brand name")
+  ggtitle("Sum of Unit Sales by Brand Name")
 ```
 
 
 
 ## promotions
 
+#### All promotions
+
 ```{r,fig.width=10}
 options(scipen=999)
-promotion_spending <- complete_data %>%
+promotion_spending <- all_data %>%
   group_by(date) %>%
-  summarize(spending = sum(real_cost, na.rm = TRUE), sales = sum(as.numeric(unit_sales), na.rm = TRUE)) %>%
+  summarize(Spending = sum(real_cost, na.rm = TRUE), Sales = sum(as.numeric(unit_sales), na.rm = TRUE)) %>%
   na.omit() %>%
   gather(variable, value,-date)
 
@@ -161,3 +182,151 @@ ggplot(promotion_spending, aes(x=date, y=value)) +
 
 ```
 
+```{r,fig.width=10}
+options(scipen=999)
+promotion_spending_type <- all_data %>%
+  group_by(date,all_types) %>%
+   summarize(Spending = sum(real_cost, na.rm = TRUE), Sales = sum(as.numeric(unit_sales), na.rm = TRUE)) %>%
+   na.omit()
+
+ggplot(promotion_spending_type, aes(x=Spending, y=Sales)) +
+  geom_point() +
+  stat_smooth(method = "lm") +
+  scale_y_continuous( labels = comma) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5),legend.position = "none")  +
+    ggtitle("Promotion Spending vs. Unit Sales") 
+```
+
+There is definitely a relationship between promotion spending and sales. How does this relationship differ by media type? 
+
+```{r,fig.width=10}
+# options(scipen=999)
+# promotion_spending_type <- all_data %>%
+#   group_by(date,all_types) %>%
+#    summarize(Spending = sum(real_cost, na.rm = TRUE), Sales = sum(as.numeric(unit_sales), na.rm = TRUE)) %>%
+#    na.omit()
+
+ggplot(promotion_spending_type, aes(x=Spending, y=Sales)) +
+  geom_point() +
+  stat_smooth(method = "lm") +
+  scale_y_continuous( labels = comma) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5),legend.position = "none") +
+  ggtitle("Promotion Spending vs. Unit Sales by Media Type") +
+  facet_grid(.~all_types, scales = "free_y") +
+  theme_bw(base_size = 10)
+
+```
+
+Looks like all of the media types have the intended result of increasing sales as as you spend more. 
+
+What does the response look like by department? 
+
+```{r,fig.width=10}
+
+promotion_spending_dept <- all_data %>%
+  group_by(date,product_department,all_types) %>%
+   summarize(Spending = sum(real_cost, na.rm = TRUE), 
+             Sales = sum(as.numeric(unit_sales), na.rm = TRUE)) %>%
+   na.omit()
+
+ggplot(promotion_spending_dept, aes(x=Spending, y=Sales)) +
+  geom_point() +
+  stat_smooth(method = "lm",se = FALSE) +
+  scale_y_continuous( labels = comma) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5),legend.position = "none") +
+  ggtitle("Promotion Spending vs. Unit Sales by Department") +
+  facet_grid(.~product_department, scales = "free_y") +
+  theme_bw(base_size = 10)
+
+```
+
+Again, it seems that all the departments are giving a strong response.  
+
+Lets look at all combinations of the top five departments (with respect to unit sales) by the top five media types (with respect to total spending).   
+
+
+```{r,fig.width=10}
+
+promotion_spending_all <- all_data %>%
+  group_by(product_department) %>%
+   summarize(Spending = sum(real_cost, na.rm = TRUE), 
+             Sales = sum(as.numeric(unit_sales), na.rm = TRUE)) %>%
+   na.omit()%>% arrange(desc(Spending))
+
+promotion_spending_type_sum <- all_data %>%
+  group_by(all_types) %>%
+   summarize(Spending = sum(real_cost, na.rm = TRUE), 
+             Sales = sum(as.numeric(unit_sales), na.rm = TRUE)) %>%
+   na.omit()  %>% arrange(desc(Spending))
+
+
+promotion_spending_dept_f <- all_data %>%
+  filter(product_department %in% head(promotion_spending_all$product_department,5) &
+         all_types %in% head(promotion_spending_type_sum$all_types,5)) %>%
+  group_by(date,product_department,all_types) %>%
+   summarize(Spending = sum(real_cost, na.rm = TRUE), 
+             Sales = sum(as.numeric(unit_sales), na.rm = TRUE)) %>%
+   na.omit()
+
+
+
+ggplot(promotion_spending_dept_f, aes(x=Spending, y=Sales)) +
+  geom_point() +
+  stat_smooth(method = "lm") +
+  scale_y_continuous( labels = comma) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5),legend.position = "none") +
+  ggtitle("Promotion Spending vs. Unit Sales by Media Type") +
+  facet_grid(all_types~product_department, scales = "free_y") +
+  theme_bw(base_size = 10)
+
+
+```
+
+# Recomendation
+
+All combinations, which one should be picked? 
+
+```{r, fig.width=15,fig.height=10}
+
+promotion_spending_dept_full <- all_data %>%
+  group_by(date,product_department,all_types) %>%
+   summarize(Spending = sum(real_cost, na.rm = TRUE), 
+             Sales = sum(as.numeric(unit_sales), na.rm = TRUE)) %>%
+  na.omit()
+
+promotion_spending_count <-promotion_spending_dept_full %>% 
+         group_by(product_department,all_types) %>% 
+         summarize(count =n()) %>% 
+         filter(count >10)
+
+ten_months_or_more <- left_join(promotion_spending_count,promotion_spending_dept_full)
+
+ggplot(ten_months_or_more, aes(x=Spending, y=Sales)) +
+  geom_point() +
+  stat_smooth(method = "lm") +
+  scale_y_continuous(labels = comma) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5),legend.position = "none") +
+  ggtitle("Promotion Spending vs. Unit Sales by Media Type") +
+  facet_grid(all_types~product_department, scales = "free_y") +
+  theme_bw(base_size = 10)
+
+
+
+
+```
+
+If you sort all the combinations (that have > 10 data points) of promotion type (can include dual types) and product department by the slope, you can see which combination might be the most effective.  
+
+```{r}
+est <- ten_months_or_more %>% 
+  group_by(product_department,all_types) %>% 
+  do(tidy(lm(Sales ~ Spending, data = .))) %>%
+  filter(term == "Spending") %>% ungroup() %>% 
+  arrange(desc(estimate)) %>% 
+  select(product_department,all_types,term, estimate)
+
+
+pandoc.table(head(est,10))
+```
+
+The above table would be the top ten most effect promotions to run. 
